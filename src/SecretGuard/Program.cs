@@ -52,7 +52,7 @@ namespace SecretGuard
 
                 try
                 {
-                    string masterKey = Environment.GetEnvironmentVariable("SECRETGUARD_MASTER_KEY");
+                    string? masterKey = Environment.GetEnvironmentVariable("SECRETGUARD_MASTER_KEY");
                     if (string.IsNullOrEmpty(masterKey))
                     {
                         Log.Warning("Переменная SECRETGUARD_MASTER_KEY не найдена в окружении! Используется дефолтный ключ безопасности.");
@@ -105,7 +105,7 @@ namespace SecretGuard
 
                 try
                 {
-                    string masterKey = Environment.GetEnvironmentVariable("SECRETGUARD_MASTER_KEY");
+                    string? masterKey = Environment.GetEnvironmentVariable("SECRETGUARD_MASTER_KEY");
                     if (string.IsNullOrEmpty(masterKey))
                     {
                         masterKey = "FallbackDefaultKey32BytesLong12345!";
