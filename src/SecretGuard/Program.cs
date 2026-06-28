@@ -13,23 +13,25 @@ namespace SecretGuard
     {
         static async Task<int> Main(string[] args)
         {
+            LoadEnvFile();
+
             Log.Logger = new LoggerConfiguration()
                 .MinimumLevel.Debug()
                 .WriteTo.Logger(lc => lc
                     .Filter.ByIncludingOnly(e => e.Level >= LogEventLevel.Error)
-                    .WriteTo.File("logs/error.log", rollingInterval: Serilog.RollingInterval.Day))
+                    .WriteTo.File("logs/error.log", rollingInterval: RollingInterval.Day))
                 .WriteTo.Logger(lc => lc
                     .Filter.ByIncludingOnly(e => e.Level < LogEventLevel.Error)
-                    .WriteTo.File("logs/info.log", rollingInterval: Serilog.RollingInterval.Day))
+                    .WriteTo.File("logs/info.log", rollingInterval: RollingInterval.Day))
                 .WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}")
                 .CreateLogger();
 
-            Log.Information("SecretGuard запущен в контейнеризированном окружении.");
+            Log.Information("SecretGuard успешно запущен.");
 
-            var rootCommand = new RootCommand("SecretGuard — утилита для защиты секретов разработки.");
+            var rootCommand = new RootCommand("SecretGuard — утилита для безопасного шифрования конфигурационных секретов.");
 
             var inputOption = new Option<string>(new[] { "--input", "-i" }, "Путь к исходному файлу") { IsRequired = true };
-            var outputOption = new Option<string>(new[] { "--output", "-o" }, "Путь к выходному зашифрованному файлу");
+            var outputOption = new Option<string>(new[] { "--output", "-o" }, "Путь к выходному файлу");
 
             var encryptCommand = new Command("encrypt", "Зашифровать файл с использованием AES-256-GCM") { inputOption, outputOption };
             var decryptCommand = new Command("decrypt", "Расшифровать защищенный файл обратно") { inputOption, outputOption };
@@ -40,17 +42,23 @@ namespace SecretGuard
             encryptCommand.SetHandler((string input, string output) =>
             {
                 output ??= input + ".enc";
-                Log.Information("Старт шифрования файла: {Input} -> {Output}", input, output);
+                Log.Information("Запуск процесса шифрования: {Input} -> {Output}", input, output);
 
                 if (!File.Exists(input))
                 {
-                    Log.Error("Критическая ошибка: Файл {Input} не найден!", input);
+                    Log.Error("Ошибка: Исходный файл {Input} не найден.", input);
                     return;
                 }
 
                 try
                 {
-                    string masterKey = Environment.GetEnvironmentVariable("SECRETGUARD_MASTER_KEY") ?? "FallbackDefaultKey32BytesLong12345!";
+                    string masterKey = Environment.GetEnvironmentVariable("SECRETGUARD_MASTER_KEY");
+                    if (string.IsNullOrEmpty(masterKey))
+                    {
+                        Log.Warning("Переменная SECRETGUARD_MASTER_KEY не найдена в окружении! Используется дефолтный ключ безопасности.");
+                        masterKey = "FallbackDefaultKey32BytesLong12345!";
+                    }
+
                     byte[] key = Encoding.UTF8.GetBytes(masterKey.PadRight(32).Substring(0, 32));
                     byte[] secretData = File.ReadAllBytes(input);
 
@@ -76,28 +84,33 @@ namespace SecretGuard
                         bw.Write(ciphertext);
                     }
 
-                    Log.Information("Файл успешно защищен и сохранен в {Output}", output);
+                    Log.Information("Шифрование успешно завершено. Защищенный файл: {Output}", output);
                 }
                 catch (Exception ex)
                 {
-                    Log.Fatal(ex, "Критический сбой при выполнении шифрования.");
+                    Log.Fatal(ex, "Критический сбой во время шифрования.");
                 }
             }, inputOption, outputOption);
 
             decryptCommand.SetHandler((string input, string output) =>
             {
                 output ??= input.Replace(".enc", ".dec");
-                Log.Information("Старт дешифрации файла: {Input}", input);
+                Log.Information("Запуск процесса дешифрации: {Input} -> {Output}", input, output);
 
                 if (!File.Exists(input))
                 {
-                    Log.Error("Критическая ошибка: Зашифрованный файл {Input} не найден!", input);
+                    Log.Error("Ошибка: Зашифрованный файл {Input} не существует.", input);
                     return;
                 }
 
                 try
                 {
-                    string masterKey = Environment.GetEnvironmentVariable("SECRETGUARD_MASTER_KEY") ?? "FallbackDefaultKey32BytesLong12345!";
+                    string masterKey = Environment.GetEnvironmentVariable("SECRETGUARD_MASTER_KEY");
+                    if (string.IsNullOrEmpty(masterKey))
+                    {
+                        masterKey = "FallbackDefaultKey32BytesLong12345!";
+                    }
+
                     byte[] key = Encoding.UTF8.GetBytes(masterKey.PadRight(32).Substring(0, 32));
 
                     byte[] nonce, tag, ciphertext;
@@ -120,11 +133,11 @@ namespace SecretGuard
                     }
 
                     File.WriteAllBytes(output, decryptedData);
-                    Log.Information("Файл успешно расшифрован: {Output}", output);
+                    Log.Information("Файл успешно расшифрован и сохранен в: {Output}", output);
                 }
                 catch (Exception ex)
                 {
-                    Log.Error(ex, "Ошибка расшифровки. Возможно, указан неверный мастер-ключ.");
+                    Log.Error(ex, "Ошибка расшифровки. Возможно, изменен файл или указан неверный SECRETGUARD_MASTER_KEY.");
                 }
             }, inputOption, outputOption);
 
@@ -135,6 +148,23 @@ namespace SecretGuard
             finally
             {
                 await Log.CloseAndFlushAsync();
+            }
+        }
+
+        private static void LoadEnvFile()
+        {
+            string envPath = Path.Combine(Directory.GetCurrentDirectory(), ".env");
+            if (!File.Exists(envPath)) return;
+
+            foreach (var line in File.ReadAllLines(envPath))
+            {
+                if (string.IsNullOrWhiteSpace(line) || line.StartsWith("#")) continue;
+
+                var parts = line.Split('=', 2);
+                if (parts.Length == 2)
+                {
+                    Environment.SetEnvironmentVariable(parts[0].Trim(), parts[1].Trim());
+                }
             }
         }
     }
